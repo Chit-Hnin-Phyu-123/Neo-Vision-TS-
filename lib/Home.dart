@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xml/xml.dart' as xml;
 import 'package:path_provider/path_provider.dart';
@@ -35,7 +36,7 @@ enum PopupMenuChoices { setting, voices, version, logout }
 
 class _HomeState extends State<Home> {
   // FlutterTts flutterTts;
-  String version = '1.0.14';
+  String version = '1.0.15';
   String language;
   String engine;
   double volume = 0.5;
@@ -133,15 +134,41 @@ class _HomeState extends State<Home> {
                   if (header2.name == "Subject") {
                     var emailsubject = header2.value;
 
-                    emailList.add({
-                      "Id": "${message.id}",
-                      "From": "$res",
-                      "Subject": "$emailsubject",
-                      "Date": "",
-                      "To": ""
-                    });
+                    message.payload.headers.forEach((header3) {
+                      if (header3.name == "Date") {
+                        var date = header3.value;
+                        DateFormat dateFormat =
+                            DateFormat("dd MMM yyyy HH:mm:ss");
+                        DateTime dateTime = dateFormat.parse(date.substring(5));
+                        String onDate =
+                            "${dateTime.day}/${dateTime.month}/${dateTime.year}";
+                        String atTime = "${dateTime.hour}:${dateTime.minute}";
 
-                    print(emailList);
+                        emailList.add({
+                          "Id": "${message.id}",
+                          "From": "$res",
+                          "Subject": "$emailsubject",
+                          "Body": "${message.snippet}",
+                          "On": "$onDate",
+                          "At": "$atTime"
+                        });
+
+                        for (var a = 0; a < unseenEmailList.length; a++) {
+                          if (unseenEmailList[a] == message.id) {
+                            newEmailList.add({
+                              "Id": "${message.id}",
+                              "From": "$res",
+                              "Subject": "$emailsubject",
+                              "Body": "${message.snippet}",
+                              "On": "$onDate",
+                              "At": "$atTime"
+                            });
+                          }
+                        }
+
+                        print(emailList);
+                      }
+                    });
                   }
                 });
               }
@@ -190,6 +217,8 @@ class _HomeState extends State<Home> {
 
   List emailList = [];
   List unseenEmailList = [];
+  List newEmailList = [];
+  List oldEmailList = [];
 
   Future<void> imapExample() async {
     SharedPreferences sharedPreferences = await SharedPreferences.getInstance();
@@ -274,71 +303,113 @@ class _HomeState extends State<Home> {
       });
     });
 
-    await getemailList(subjectList, fromList);
+    List<MimeMessage> dateList = [];
+
+    await client
+        .fetchRecentMessages(
+            messageCount: 20, criteria: 'BODY.PEEK[HEADER.FIELDS (DATE)]')
+        .then((fetchResult) {
+      print("fetchResult success");
+      dateList = fetchResult.result.messages;
+    }).catchError((error) {
+      print("error ==> $error");
+    });
+
+    await getemailList(subjectList, fromList, dateList);
     await client.logout();
   }
 
-  Future<void> getemailList(
-      List<MimeMessage> subjectList, List<MimeMessage> fromList) async {
+  Future<void> getemailList(List<MimeMessage> subjectList,
+      List<MimeMessage> fromList, List<MimeMessage> dateList) async {
     for (var i = 0; i < subjectList.length; i++) {
       for (var j = 0; j < fromList.length; j++) {
         if (subjectList[i].sequenceId == fromList[j].sequenceId) {
-          if (emailList.length == 0) {
-            if (subjectList[i].isTextPlainMessage()) {
-              emailList.add({
-                "Id": "${subjectList[i].sequenceId}",
-                "From": fromList[j].from[0].personalName,
-                "Subject": subjectList[i].decodeSubject(),
-                "Date": "",
-                "To": ""
-              });
-            } else {
-              emailList.add({
-                "Id": "${subjectList[i].sequenceId}",
-                "From": fromList[j].from[0].personalName,
-                "Subject": subjectList[i].decodeTextPlainPart(),
-                "Date": "",
-                "To": ""
-              });
-            }
-          } else {
-            if (emailList
-                    .where((element) =>
-                        element["From"] == fromList[j].from[0].personalName &&
-                        element["Subject"] == subjectList[i].decodeSubject())
-                    .toList()
-                    .length ==
-                0) {
-              if (subjectList[i].isTextPlainMessage()) {
-                emailList.add({
-                  "Id": "${subjectList[i].sequenceId}",
-                  "From": fromList[j].from[0].personalName,
-                  "Subject": subjectList[i].decodeSubject(),
-                  "Date": "",
-                  "To": ""
-                });
+          for (var k = 0; k < dateList.length; k++) {
+            if (subjectList[i].sequenceId == dateList[k].sequenceId) {
+              DateTime dateTime = dateList[k].decodeHeaderDateValue("Date");
+              String time = DateFormat.jm().format(
+                  DateFormat("yyyy-MM-dd HH:mm:ss").parse(dateTime.toString()));
+              String time2 = time.substring(0, time.lastIndexOf(":"));
+              String time3 = "";
+              if (time2.length != 2) {
+                time3 = "0" + time;
               } else {
-                emailList.add({
-                  "Id": "${subjectList[i].sequenceId}",
-                  "From": fromList[j].from[0].personalName,
-                  "Subject": subjectList[i].decodeTextPlainPart(),
-                  "Date": "",
-                  "To": ""
-                });
+                time3 = time;
+              }
+              String onDate =
+                  "${dateTime.day}/${dateTime.month}/${dateTime.year}";
+              String atTime = time3.substring(0, time.length - 3);
+              print("$onDate =======> $atTime");
+
+              if (emailList.length == 0) {
+                if (subjectList[i].isTextPlainMessage()) {
+                  emailList.add({
+                    "Id": "${subjectList[i].sequenceId}",
+                    "From": fromList[j].from[0].personalName,
+                    "Subject": subjectList[i].decodeSubject(),
+                    "Body": "",
+                    "On": "$onDate",
+                    "At": "$atTime",
+                  });
+                } else {
+                  emailList.add({
+                    "Id": "${subjectList[i].sequenceId}",
+                    "From": fromList[j].from[0].personalName,
+                    "Subject": subjectList[i].decodeTextPlainPart(),
+                    "Body": "",
+                    "On": "$onDate",
+                    "At": "$atTime",
+                  });
+                }
+              } else {
+                if (emailList
+                        .where((element) =>
+                            element["From"] ==
+                                fromList[j].from[0].personalName &&
+                            element["Subject"] ==
+                                subjectList[i].decodeSubject())
+                        .toList()
+                        .length ==
+                    0) {
+                  if (subjectList[i].isTextPlainMessage()) {
+                    emailList.add({
+                      "Id": "${subjectList[i].sequenceId}",
+                      "From": fromList[j].from[0].personalName,
+                      "Subject": subjectList[i].decodeSubject(),
+                      "Body": "",
+                      "On": "$onDate",
+                      "At": "$atTime",
+                    });
+                  } else {
+                    emailList.add({
+                      "Id": "${subjectList[i].sequenceId}",
+                      "From": fromList[j].from[0].personalName,
+                      "Subject": subjectList[i].decodeTextPlainPart(),
+                      "Body": "",
+                      "On": "$onDate",
+                      "At": "$atTime",
+                    });
+                  }
+                }
               }
             }
-          }
-        }
 
-        if (j == fromList.length - 1) {
-          if (i == subjectList.length - 1) {
-            // print(emailList);
-            for (var k = 0; k < emailList.length; k++) {
-              print(emailList[k]);
+            if (k == dateList.length - 1) {
+              if (j == fromList.length - 1) {
+                if (i == subjectList.length - 1) {
+                  for (var k = 0; k < emailList.length; k++) {
+                    for (var l = 0; l < unseenEmailList.length; l++) {
+                      if (emailList[k]["Id"] == '${unseenEmailList[l]}') {
+                        newEmailList.add(emailList[k]);
+                      }
+                    }
+                  }
+                  setState(() {
+                    loading = false;
+                  });
+                }
+              }
             }
-            setState(() {
-              loading = false;
-            });
           }
         }
       }
@@ -514,42 +585,52 @@ class _HomeState extends State<Home> {
           check = 0;
           valueCheck = 0;
 
-          for (var a = 0; a < emailList.length; a++) {
-            String speechText =
-                "${emailList[a]["Subject"]} From ${emailList[a]["From"]}";
+          oldEmailList = emailList;
 
-            if (isStop == true) {
-            } else {
-              // print("$check == $valueCheck");
-              // if (check == valueCheck) {
-              if (a.toString() == "0") {
-                check = 0;
-                valueCheck = 0;
+          for (var a = 0; a < newEmailList.length; a++) {
+            oldEmailList.removeWhere(
+                (element) => element["id"] == newEmailList[a]["id"]);
+
+            if (a == newEmailList.length - 1) {
+              
+              // for (var a = 0; a < emailList.length; a++) {
+              String speechText =
+                  "${newEmailList[check]["Subject"]} From ${newEmailList[check]["From"]}";
+
+              if (isStop == true) {
               } else {
-                speechFromUser = "";
-              }
-              await speakAll(
-                      speechText, speechFromUser, emailList[a]["Id"], emailList)
-                  .then((value) {
-                print("$speechText ========> $value");
-                checkSpeech = true;
+                // print("$check == $valueCheck");
+                // if (check == valueCheck) {
+                // if (a.toString() == "0") {
+                //   check = 0;
+                //   valueCheck = 0;
+                // } else {
+                //   speechFromUser = "";
+                // }
+                await speakAll(speechText, speechFromUser,
+                        newEmailList[check]["Id"], newEmailList, oldEmailList)
+                    .then((value) {
+                  print("$speechText ========> $value");
+                  checkSpeech = true;
 
-                setState(() {
-                  lastSpeechWord = speechText;
-                  lastWords = lastSpeechWord;
+                  setState(() {
+                    lastSpeechWord = speechText;
+                    lastWords = lastSpeechWord;
+                  });
                 });
-              });
 
-              String getsenderName = speechText.toString().substring(
-                  speechText.toString().lastIndexOf("From "),
-                  speechText.toString().length);
-              String getSubject = speechText
-                  .toString()
-                  .substring(0, speechText.toString().lastIndexOf("From "));
-              readEmail = {
-                "From": getsenderName.replaceAll(" From ", ""),
-                "Subject": getSubject
-              };
+                String getsenderName = speechText.toString().substring(
+                    speechText.toString().lastIndexOf("From "),
+                    speechText.toString().length);
+                String getSubject = speechText
+                    .toString()
+                    .substring(0, speechText.toString().lastIndexOf("From "));
+                readEmail = {
+                  "From": getsenderName.replaceAll(" From ", ""),
+                  "Subject": getSubject
+                };
+                // }
+              }
               // }
             }
           }
@@ -582,7 +663,7 @@ class _HomeState extends State<Home> {
                     // print("One =============> $c == $check");
                     // if (c == check) {
                     //   print("Two ==> $c == $check");
-                    await speakAll(speechText, speechFromUser,
+                    await speakNewEmail(speechText, speechFromUser,
                             unreadList[check]["Id"], unreadList)
                         .then((value) {
                       print("$speechText ========> $value");
@@ -685,6 +766,7 @@ class _HomeState extends State<Home> {
 
   List voiceCommandList = [
     {"VoiceCommand": "check emails", "CurrentUse": false},
+    {"VoiceCommand": "read new emails", "CurrentUse": false},
     {"VoiceCommand": "read emails", "CurrentUse": false}
   ];
 
@@ -1206,12 +1288,41 @@ class _HomeState extends State<Home> {
                           if (header2.name == "Subject") {
                             var emailsubject = header2.value;
 
-                            emailList.add({
-                              "Id": "${message.id}",
-                              "From": "$res",
-                              "Subject": "$emailsubject",
-                              "Date": "",
-                              "To": ""
+                            message.payload.headers.forEach((header3) {
+                              if (header3.name == "Date") {
+                                var date = header3.value;
+                                DateFormat dateFormat =
+                                    DateFormat("dd MMM yyyy HH:mm:ss");
+                                DateTime dateTime = dateFormat.parse(date.substring(5));
+                                String onDate =
+                                    "${dateTime.day}/${dateTime.month}/${dateTime.year}";
+                                String atTime =
+                                    "${dateTime.hour}:${dateTime.minute}";
+
+                                emailList.add({
+                                  "Id": "${message.id}",
+                                  "From": "$res",
+                                  "Subject": "$emailsubject",
+                                  "Body": "${message.snippet}",
+                                  "On": "$onDate",
+                                  "At": "$atTime"
+                                });
+
+                                for (var a = 0;
+                                    a < unseenEmailList.length;
+                                    a++) {
+                                  if (unseenEmailList[a] == message.id) {
+                                    newEmailList.add({
+                                      "Id": "${message.id}",
+                                      "From": "$res",
+                                      "Subject": "$emailsubject",
+                                      "Body": "${message.snippet}",
+                                      "On": "$onDate",
+                                      "At": "$atTime"
+                                    });
+                                  }
+                                }
+                              }
                             });
                           }
                         });
@@ -1253,15 +1364,15 @@ class _HomeState extends State<Home> {
 
       if (text.toLowerCase() == "read new" ||
           text.toLowerCase() == "read new email" ||
-          text.toLowerCase() == "read new emails" ||
-          text.toLowerCase() == "read email" ||
-          text.toLowerCase() == "read emails") {
+          text.toLowerCase() == "read new emails") {
         print("The text is ==> " + text);
         await _speak(text, "$text", "readnew");
       }
       if (text.toLowerCase() == "read all" ||
           text.toLowerCase() == "read all email" ||
-          text.toLowerCase() == "read all emails") {
+          text.toLowerCase() == "read all emails" ||
+          text.toLowerCase() == "read email" ||
+          text.toLowerCase() == "read emails") {
         // check = 0;
         print("The text is ==> " + text);
         await _speak(text, "$text", "readall");
@@ -1486,8 +1597,10 @@ class _HomeState extends State<Home> {
         if (sharedPreferences.getString("LoginType") == "GoogleLogin") {
           mails.setSeen(id);
           unseenEmailList.removeWhere((element) => element.toString() == id);
+          newEmailList.removeWhere((element) => element.toString() == id);
+          oldEmailList.add(emailList[check]);
         } else if (sharedPreferences.getString("LoginType") == "ImapLogin") {
-          imapSeen(id);
+          imapSeen(id, emailList[check]);
         }
       }).catchError((error) {
         print("error =======> $error");
@@ -1503,6 +1616,140 @@ class _HomeState extends State<Home> {
   }
 
   Future<String> speakAll(
+      String text, String textfromUser, id, List userEmailList, List userOldEmailList) async {
+    print("The Text is ========> $text");
+    setState(() {
+      downloadAudioFile = true;
+    });
+    String xmlLang;
+    String xmlGender;
+    String xmlName;
+    SharedPreferences sharedPreferences = await SharedPreferences.getInstance();
+    if (sharedPreferences.getString("ChooseVoice") == null) {
+      xmlLang = "en-US";
+      xmlGender = "Female";
+      xmlName = "en-US-AriaNeural";
+    } else {
+      var getChooseVoice =
+          json.decode(sharedPreferences.getString("ChooseVoice"));
+      xmlLang = "${getChooseVoice["Locale"]}";
+      xmlGender = "${getChooseVoice["Gender"]}";
+      xmlName = "${getChooseVoice["ShortName"]}";
+    }
+    xml.XmlBuilder builder = xml.XmlBuilder();
+    builder.element('speak', nest: () {
+      builder.attribute('version', '1.0');
+      builder.attribute('xml:lang', '$xmlLang');
+      builder.element('voice', nest: () {
+        builder.attribute('xml:lang', '$xmlLang');
+        builder.attribute('xml:gender', '$xmlGender');
+        builder.attribute('name', '$xmlName');
+        builder.text(text);
+      });
+    });
+
+    String body = builder.build().toXmlString();
+
+    String url =
+        "https://eastasia.tts.speech.microsoft.com/cognitiveservices/v1";
+    Map<String, String> headers = {
+      'Authorization': 'Bearer ' + await _getAccessToken(),
+      'cache-control': 'no-cache',
+      'User-Agent': 'TTSPackage',
+      'X-Microsoft-OutputFormat': 'riff-24khz-16bit-mono-pcm',
+      'Content-Type': 'application/ssml+xml'
+    };
+
+    http.Response request = await http.post(url, headers: headers, body: body);
+
+    Uint8List bytes = request.bodyBytes;
+
+    final dir = await getApplicationDocumentsDirectory();
+    DateTime dateTime = DateTime.now();
+    String newfileName =
+        "${dateTime.year}${dateTime.month}${dateTime.day}${dateTime.hour}${dateTime.minute}${dateTime.second}${dateTime.millisecond}";
+    final file = new File('${dir.path}/$newfileName.mp3');
+
+    file.writeAsBytesSync(bytes);
+
+    file.exists().then((value) async {
+      setState(() {
+        downloadAudioFile = false;
+      });
+      readEmail = {
+        "From": userEmailList[check]["From"],
+        "Subject": userEmailList[check]["Subject"]
+      };
+      if (text == "Welcome to Neo Vision") {
+        //
+        readNext = true;
+      } else {
+        setState(() {
+          if (check == 0) {
+            speechList.add({"fromApp": "$text", "fromUser": "$textfromUser"});
+          } else {
+            speechList.add({"fromApp": "$text", "fromUser": ""});
+          }
+
+          if (controller.hasClients == true) {
+            controller.animateTo(
+              0.0,
+              curve: Curves.easeOut,
+              duration: const Duration(milliseconds: 300),
+            );
+          }
+        });
+      }
+
+      audioPlayer = AudioPlayer(mode: PlayerMode.MEDIA_PLAYER);
+
+      AudioPlayer.logEnabled = false;
+
+      await audioPlayer
+          .play(file.path, isLocal: true)
+          .then((value) {})
+          .catchError((error) {
+        print("error =======> $error");
+      });
+
+      audioPlayer.onPlayerCompletion.listen((event) async {
+        audioPlayer.stop();
+        if (sharedPreferences.getString("LoginType") == "GoogleLogin") {
+          mails.setSeen(id);
+          unseenEmailList.removeWhere((element) => element.toString() == id);
+          newEmailList.removeWhere((element) => element.toString() == id);
+          oldEmailList.add(userEmailList[check]);
+        } else if (sharedPreferences.getString("LoginType") == "ImapLogin") {
+          imapSeen(id, userEmailList[check]);
+        }
+        if (check + 1 == userEmailList.length) {
+          if(userOldEmailList.length == 0) {
+            //
+          } else {
+            check = 0;
+            readNext = true;
+            String speechText =
+                "${userOldEmailList[check]["Subject"]} From ${userOldEmailList[check]["From"]}";
+            await speakAll(
+                speechText, textfromUser, userOldEmailList[check]["Id"], userOldEmailList, []);
+          }
+          
+        } else {
+          check = check + 1;
+          valueCheck = valueCheck + 1;
+          readNext = true;
+          String speechText =
+              "${userEmailList[check]["Subject"]} From ${userEmailList[check]["From"]}";
+          await speakAll(
+              speechText, textfromUser, userEmailList[check]["Id"], userEmailList, userOldEmailList);
+        }
+      });
+    });
+
+    return "complete";
+  }
+
+  Future<String> speakNewEmail(
       String text, String textfromUser, id, List emailList) async {
     print("The Text is ========> $text");
     setState(() {
@@ -1604,8 +1851,10 @@ class _HomeState extends State<Home> {
         if (sharedPreferences.getString("LoginType") == "GoogleLogin") {
           mails.setSeen(id);
           unseenEmailList.removeWhere((element) => element.toString() == id);
+          newEmailList.removeWhere((element) => element.toString() == id);
+          oldEmailList.add(emailList[check]);
         } else if (sharedPreferences.getString("LoginType") == "ImapLogin") {
-          imapSeen(id);
+          imapSeen(id, emailList[check]);
         }
         if (check + 1 != emailList.length) {
           check = check + 1;
@@ -1613,7 +1862,7 @@ class _HomeState extends State<Home> {
           readNext = true;
           String speechText =
               "${emailList[check]["Subject"]} From ${emailList[check]["From"]}";
-          await speakAll(
+          await speakNewEmail(
               speechText, textfromUser, emailList[check]["Id"], emailList);
         }
       });
@@ -1622,7 +1871,7 @@ class _HomeState extends State<Home> {
     return "complete";
   }
 
-  Future imapSeen(id) async {
+  Future imapSeen(id, emaildata) async {
     SharedPreferences sharedPreferences = await SharedPreferences.getInstance();
     var userDetail = json.decode(sharedPreferences.getString("UserDetail"));
 
@@ -1687,6 +1936,8 @@ class _HomeState extends State<Home> {
           client.markSeen(messageSequence).then((value) {
             print("Mark Seen Success");
             unseenEmailList.removeWhere((element) => element.toString() == id);
+            newEmailList.removeWhere((element) => element.toString() == id);
+            oldEmailList.add(emaildata);
             // print(subjectList[i].flags);
           }).catchError((error) {
             print("Mark Seen Error $error");
